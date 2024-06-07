@@ -30,7 +30,7 @@ error Bartering__RequestNotActive();
 error Bartering__ProposalNotValid();
 error Bartering__IndicesCannotBeEmpty();
 error Bartering__DuplicateOrUnsortedIndices();
-error Bartering_OwnerWithdrawalFailed();
+error Bartering__OwnerWithdrawalFailed();
 
 /**
  * @title Bartering
@@ -83,6 +83,13 @@ contract Bartering is ReentrancyGuard, Ownable {
     event TokensTransferredFromUser(address indexed user, uint256 length);
     event TokensMovedToWithdrawable(address indexed user, uint256 length);
 
+    // Modifier to enforce fee payment
+    modifier feePayment() {
+        require(msg.value == s_currentFee, Bartering__IncorrectFee());
+        s_balance += msg.value;
+        _;
+    }
+
     /**
      * @dev Constructor to initialize the contract with the initial owner.
      * @param initialOwner The address of the initial owner.
@@ -114,10 +121,7 @@ contract Bartering is ReentrancyGuard, Ownable {
         address[] memory requestedTokenAddresses,
         uint256[] memory requestedTokenIds,
         uint256[] memory requestedAmounts
-    ) external payable nonReentrant returns (uint256) {
-        require(msg.value == s_currentFee, Bartering__IncorrectFee());
-        s_balance += msg.value;
-
+    ) external payable nonReentrant feePayment returns (uint256) {
         // Check if input arrays have matching lengths
         uint256 offeredLength =
             _checkArrayLengths(offeredTokenTypes, offeredTokenAddresses, offeredTokenIds, offeredAmounts);
@@ -241,6 +245,10 @@ contract Bartering is ReentrancyGuard, Ownable {
         emit TokensWithdrawn(msg.sender, length);
     }
 
+    /**
+     * @notice Withdraws specified tokens for the caller by their indices.
+     * @param indices Array of indices representing the tokens to withdraw.
+     */
     function withdrawTokensByIndices(uint256[] memory indices) external nonReentrant {
         uint256 arrayLength = s_withdrawableTokens[msg.sender].length;
         uint256 indicesLength = indices.length;
@@ -279,16 +287,24 @@ contract Bartering is ReentrancyGuard, Ownable {
         emit TokensWithdrawn(msg.sender, indicesLength);
     }
 
+    /**
+     * @notice Changes the fee for creating a barter request.
+     * @param newFee The new fee amount.
+     */
     function changeFee(uint256 newFee) external onlyOwner {
         s_currentFee = newFee;
     }
 
+    /**
+     * @notice Withdraws the contract balance to the specified receiver.
+     * @param receiver The address of the receiver.
+     */
     function ownerWithdrawal(address receiver) external onlyOwner {
         uint256 toWithdraw = s_balance;
         s_balance = 0;
         (bool success,) = payable(receiver).call{value: toWithdraw}("");
         if (!success) {
-            revert Bartering_OwnerWithdrawalFailed();
+            revert Bartering__OwnerWithdrawalFailed();
         }
     }
 
@@ -471,7 +487,11 @@ contract Bartering is ReentrancyGuard, Ownable {
         return s_withdrawableTokens[user];
     }
 
-    function getCurrentFee() external view returns (uint256 currentFee) {
+    /**
+     * @notice Gets the current fee for creating a barter request.
+     * @return The current fee amount.
+     */
+    function getCurrentFee() external view returns (uint256) {
         return s_currentFee;
     }
 }
