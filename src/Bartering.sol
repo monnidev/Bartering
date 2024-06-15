@@ -12,7 +12,9 @@ pragma solidity ^0.8.26;
 
 // Imports
 import {IERC20} from "../lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "../lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC721} from "../lib/openzeppelin-contracts/contracts/token/ERC721/IERC721.sol";
+import {ERC721Holder} from "../lib/openzeppelin-contracts/contracts/token/ERC721/utils/ERC721Holder.sol";
 import {ReentrancyGuard} from "../lib/openzeppelin-contracts/contracts/utils/ReentrancyGuard.sol";
 import {Ownable} from "../lib/openzeppelin-contracts/contracts/access/Ownable.sol";
 
@@ -20,7 +22,6 @@ import {Ownable} from "../lib/openzeppelin-contracts/contracts/access/Ownable.so
 error Bartering__IncorrectFee();
 error Bartering__LengthMismatch();
 error Bartering__NotZero();
-error Bartering__UnknownType();
 error Bartering__OnlyRequester();
 error Bartering__RequestNotPending();
 error Bartering__NothingToWithdraw();
@@ -36,7 +37,9 @@ error Bartering__OwnerWithdrawalFailed();
  * @title Bartering
  * @dev A contract to facilitate bartering of ERC20 and ERC721 tokens between users.
  */
-contract Bartering is ReentrancyGuard, Ownable {
+contract Bartering is ReentrancyGuard, Ownable, ERC721Holder {
+    using SafeERC20 for IERC20;
+
     // Enum to represent the status of a request
     enum RequestStatus {
         Pending,
@@ -69,11 +72,12 @@ contract Bartering is ReentrancyGuard, Ownable {
     // State variables
     mapping(uint256 => BarterRequest) private s_barterRequests; // Maps request IDs to barter requests
     mapping(address => uint256[]) private s_userRequests; // Maps user addresses to their request IDs
-    uint256 private s_nextRequestId; // Next request ID to be used, starts at 0
     mapping(address => TokenDetail[]) private s_withdrawableTokens; // Tokens withdrawable by address
 
-    uint256 s_currentFee;
-    uint256 s_balance;
+    uint256 private s_nextRequestId = 0; // Next request ID to be used, starts at 0
+
+    uint256 private s_currentFee;
+    uint256 private s_balance;
 
     // Events
     event BarterRequestCreated(uint256 indexed requestId, address indexed requester);
@@ -82,6 +86,8 @@ contract Bartering is ReentrancyGuard, Ownable {
     event TokensWithdrawn(address indexed user, uint256 length);
     event TokensTransferredFromUser(address indexed user, uint256 length);
     event TokensMovedToWithdrawable(address indexed user, uint256 length);
+    event FeeChanged(uint256 indexed newFee);
+    event OwnerWithdrew(uint256 indexed amount);
 
     // Modifier to enforce fee payment
     modifier feePayment() {
@@ -95,56 +101,32 @@ contract Bartering is ReentrancyGuard, Ownable {
      * @param initialOwner The address of the initial owner.
      */
     constructor(address initialOwner) Ownable(initialOwner) {
-        s_nextRequestId = 0;
         s_currentFee = 0;
     }
 
     /**
      * @notice Creates a new barter request.
      * @dev For ERC721 tokens, a token ID of `type(uint256).max` is considered as accepting any token from the collection.
-     * @param offeredTokenTypes Types of the tokens being offered.
-     * @param offeredTokenAddresses Addresses of the tokens being offered.
-     * @param offeredTokenIds IDs of the tokens being offered.
-     * @param offeredAmounts Amounts of the tokens being offered.
-     * @param requestedTokenTypes Types of the tokens being requested.
-     * @param requestedTokenAddresses Addresses of the tokens being requested.
-     * @param requestedTokenIds IDs of the tokens being requested.
-     * @param requestedAmounts Amounts of the tokens being requested.
+     * @param offeredTokens Array of the tokens being offered.
+     * @param requestedTokens Array of the tokens being requested.
      * @return The ID of the newly created request.
      */
-    function createBarterRequest(
-        uint8[] memory offeredTokenTypes,
-        address[] memory offeredTokenAddresses,
-        uint256[] memory offeredTokenIds,
-        uint256[] memory offeredAmounts,
-        uint8[] memory requestedTokenTypes,
-        address[] memory requestedTokenAddresses,
-        uint256[] memory requestedTokenIds,
-        uint256[] memory requestedAmounts
-    ) external payable nonReentrant feePayment returns (uint256) {
-        // Check if input arrays have matching lengths
-        uint256 offeredLength =
-            _checkArrayLengths(offeredTokenTypes, offeredTokenAddresses, offeredTokenIds, offeredAmounts);
-        uint256 requestedLength =
-            _checkArrayLengths(requestedTokenTypes, requestedTokenAddresses, requestedTokenIds, requestedAmounts);
-
-        // Convert input arrays to TokenDetail arrays
-        TokenDetail[] memory offeredItems = _convertToTokenDetailArray(
-            offeredLength, offeredTokenTypes, offeredTokenAddresses, offeredTokenIds, offeredAmounts
-        );
-        TokenDetail[] memory requestedItems = _convertToTokenDetailArray(
-            requestedLength, requestedTokenTypes, requestedTokenAddresses, requestedTokenIds, requestedAmounts
-        );
-
+    function createBarterRequest(TokenDetail[] calldata offeredTokens, TokenDetail[] calldata requestedTokens)
+        external
+        payable
+        nonReentrant
+        feePayment
+        returns (uint256)
+    {
         // Transfer offered tokens from the user to the contract
-        _transferTokensFromUser(offeredLength, offeredItems);
+        _transferTokensFromUser(offeredTokens);
 
         // Create a new barter request
         uint256 requestId = s_nextRequestId;
         s_barterRequests[requestId] = BarterRequest({
             requester: msg.sender,
-            offeredItems: offeredItems,
-            requestedItems: requestedItems,
+            offeredItems: offeredTokens,
+            requestedItems: requestedTokens,
             status: RequestStatus.Pending
         });
 
@@ -184,32 +166,14 @@ contract Bartering is ReentrancyGuard, Ownable {
     /**
      * @notice Accepts a barter request by proposing tokens.
      * @param requestId The ID of the request to accept.
-     * @param proposedTokenTypes Types of the proposed tokens.
-     * @param proposedTokenAddresses Addresses of the proposed tokens.
-     * @param proposedTokenIds IDs of the proposed tokens.
-     * @param proposedAmounts Amounts of the proposed tokens.
+     * @param proposedTokens Array of proposed tokens.
      */
-    function acceptBarterRequest(
-        uint256 requestId,
-        uint8[] memory proposedTokenTypes,
-        address[] memory proposedTokenAddresses,
-        uint256[] memory proposedTokenIds,
-        uint256[] memory proposedAmounts
-    ) external nonReentrant {
-        // Check if input arrays have matching lengths
-        uint256 arrayLength =
-            _checkArrayLengths(proposedTokenTypes, proposedTokenAddresses, proposedTokenIds, proposedAmounts);
-
-        // Convert input arrays to TokenDetail arrays
-        TokenDetail[] memory proposedTokens = _convertToTokenDetailArray(
-            arrayLength, proposedTokenTypes, proposedTokenAddresses, proposedTokenIds, proposedAmounts
-        );
-
+    function acceptBarterRequest(uint256 requestId, TokenDetail[] calldata proposedTokens) external nonReentrant {
         // Validate the proposed tokens against the request
         require(_isValidProposal(requestId, proposedTokens), Bartering__ProposalNotValid());
 
         // Transfer proposed tokens from the user to the contract
-        _transferTokensFromUser(arrayLength, proposedTokens);
+        _transferTokensFromUser(proposedTokens);
 
         // Retrieve the current request and update its status to completed
         BarterRequest memory currentRequest = s_barterRequests[requestId];
@@ -217,44 +181,21 @@ contract Bartering is ReentrancyGuard, Ownable {
 
         // Move the tokens to the withdrawable state for both parties
         _moveTokensToWithdrawable(currentRequest.requester, proposedTokens);
-        _moveTokensToWithdrawable(msg.sender, currentRequest.requestedItems);
+        _moveTokensToWithdrawable(msg.sender, currentRequest.offeredItems);
 
         // Emit event for the accepted barter request
         emit BarterRequestAccepted(requestId, msg.sender);
     }
 
     /**
-     * @notice Withdraws all tokens for the caller.
-     * @dev This can be problematic if the tokens have non-standard implementations.
-     */
-    function withdrawAllTokens() external nonReentrant {
-        // Retrieve the tokens to withdraw for the caller
-        TokenDetail[] memory tokensToWithdraw = s_withdrawableTokens[msg.sender];
-        uint256 length = tokensToWithdraw.length;
-
-        // Ensure there are tokens to withdraw
-        require(length != 0, Bartering__NothingToWithdraw());
-
-        // Clear the withdrawable tokens for the caller
-        delete s_withdrawableTokens[msg.sender];
-
-        // Withdraw the tokens
-        _withdrawTokens(length, tokensToWithdraw);
-
-        // Emit event for the withdrawn tokens
-        emit TokensWithdrawn(msg.sender, length);
-    }
-
-    /**
      * @notice Withdraws specified tokens for the caller by their indices.
      * @param indices Array of indices representing the tokens to withdraw.
      */
-    function withdrawTokensByIndices(uint256[] memory indices) external nonReentrant {
+    function withdrawTokensByIndices(uint256[] calldata indices) external nonReentrant {
         uint256 arrayLength = s_withdrawableTokens[msg.sender].length;
         uint256 indicesLength = indices.length;
 
         // Ensure indices are within bounds, unique and sorted
-        require(indicesLength > 0, Bartering__IndicesCannotBeEmpty());
         for (uint256 i = 0; i < indicesLength; i++) {
             require(indices[i] < arrayLength, Bartering__TokenDoesNotExist());
             if (i > 0) {
@@ -271,12 +212,12 @@ contract Bartering is ReentrancyGuard, Ownable {
         }
 
         // Withdraw tokens
-        _withdrawTokens(indicesLength, tokensToWithdraw);
+        _withdrawTokens(tokensToWithdraw);
 
         // Remove withdrawn tokens from storage, ensuring array integrity
-        for (uint256 i = 0; i < indicesLength; i++) {
-            uint256 lastIndex = arrayLength - 1 - i;
-            uint256 index = indices[indicesLength - 1 - i]; // Adjust index for each removal
+        for (uint256 i = indicesLength; i > 0; i--) {
+            uint256 lastIndex = arrayLength - i;
+            uint256 index = indices[i - 1]; // Adjust index for each removal
             if (index != lastIndex) {
                 s_withdrawableTokens[msg.sender][index] = s_withdrawableTokens[msg.sender][lastIndex];
             }
@@ -293,6 +234,7 @@ contract Bartering is ReentrancyGuard, Ownable {
      */
     function changeFee(uint256 newFee) external onlyOwner {
         s_currentFee = newFee;
+        emit FeeChanged(newFee);
     }
 
     /**
@@ -306,6 +248,7 @@ contract Bartering is ReentrancyGuard, Ownable {
         if (!success) {
             revert Bartering__OwnerWithdrawalFailed();
         }
+        emit OwnerWithdrew(toWithdraw);
     }
 
     /**
@@ -315,7 +258,7 @@ contract Bartering is ReentrancyGuard, Ownable {
      * @return bool indicating whether the proposal is valid.
      * @dev For ERC721 tokens, a token ID of `type(uint256).max` is considered as accepting any token from the collection.
      */
-    function _isValidProposal(uint256 proposalId, TokenDetail[] memory proposedTokens) private view returns (bool) {
+    function _isValidProposal(uint256 proposalId, TokenDetail[] calldata proposedTokens) private view returns (bool) {
         BarterRequest memory request = s_barterRequests[proposalId];
         TokenDetail[] memory requestTokens = request.requestedItems;
 
@@ -361,18 +304,22 @@ contract Bartering is ReentrancyGuard, Ownable {
 
     /**
      * @dev Transfers tokens from the user to the contract.
-     * @param length The number of tokens.
      * @param tokenDetails The token details.
      */
-    function _transferTokensFromUser(uint256 length, TokenDetail[] memory tokenDetails) private {
+    function _transferTokensFromUser(TokenDetail[] calldata tokenDetails) private {
+        uint256 length = tokenDetails.length;
         for (uint256 i = 0; i < length; i++) {
             TokenType currentType = tokenDetails[i].tokenType;
             if (currentType == TokenType.ERC20) {
-                // Transfer ERC20 token from user to contract without checking return value
-                IERC20(tokenDetails[i].tokenAddress).transferFrom(msg.sender, address(this), tokenDetails[i].amount);
+                // Transfer ERC20 token from user to contract
+                IERC20(tokenDetails[i].tokenAddress).safeTransferFrom(msg.sender, address(this), tokenDetails[i].amount);
             } else if (currentType == TokenType.ERC721) {
                 // Transfer ERC721 token from user to contract
-                IERC721(tokenDetails[i].tokenAddress).transferFrom(msg.sender, address(this), tokenDetails[i].tokenId);
+                IERC721(tokenDetails[i].tokenAddress).safeTransferFrom(
+                    msg.sender, address(this), tokenDetails[i].tokenId
+                );
+            } else {
+                revert(); // This revert should not be triggerable.
             }
         }
         // Emit event for transferring tokens from the user
@@ -381,70 +328,24 @@ contract Bartering is ReentrancyGuard, Ownable {
 
     /**
      * @dev Withdraws tokens to the user.
-     * @param length The number of tokens.
      * @param tokenDetails The token details.
      */
-    function _withdrawTokens(uint256 length, TokenDetail[] memory tokenDetails) private {
+    function _withdrawTokens(TokenDetail[] memory tokenDetails) private {
+        uint256 length = tokenDetails.length;
         for (uint256 i = 0; i < length; i++) {
             TokenType currentType = tokenDetails[i].tokenType;
             if (currentType == TokenType.ERC20) {
-                // Transfer ERC20 token from contract to user without checking return value
-                IERC20(tokenDetails[i].tokenAddress).transfer(msg.sender, tokenDetails[i].amount);
+                // Transfer ERC20 token from contract to user
+                IERC20(tokenDetails[i].tokenAddress).safeTransfer(msg.sender, tokenDetails[i].amount);
             } else if (currentType == TokenType.ERC721) {
                 // Transfer ERC721 token from contract to user
-                IERC721(tokenDetails[i].tokenAddress).transferFrom(address(this), msg.sender, tokenDetails[i].tokenId);
+                IERC721(tokenDetails[i].tokenAddress).safeTransferFrom(
+                    address(this), msg.sender, tokenDetails[i].tokenId
+                );
+            } else {
+                revert(); // This revert should not be triggerable.
             }
         }
-    }
-
-    /**
-     * @dev Checks if input arrays have matching lengths.
-     * @param tokenTypes Types of the tokens.
-     * @param tokenAddresses Addresses of the tokens.
-     * @param tokenIds IDs of the tokens.
-     * @param amounts Amounts of the tokens.
-     * @return The length of the input arrays.
-     */
-    function _checkArrayLengths(
-        uint8[] memory tokenTypes,
-        address[] memory tokenAddresses,
-        uint256[] memory tokenIds,
-        uint256[] memory amounts
-    ) private pure returns (uint256) {
-        uint256 length = tokenTypes.length;
-        if (tokenAddresses.length != length || tokenIds.length != length || amounts.length != length) {
-            revert Bartering__LengthMismatch();
-        }
-        if (length == 0) revert Bartering__NotZero();
-        return length;
-    }
-
-    /**
-     * @dev Converts input arrays to an array of TokenDetail structs.
-     * @param length The length of the arrays.
-     * @param tokenTypes Types of the tokens.
-     * @param tokenAddresses Addresses of the tokens.
-     * @param tokenIds IDs of the tokens.
-     * @param amounts Amounts of the tokens.
-     * @return An array of TokenDetail structs.
-     */
-    function _convertToTokenDetailArray(
-        uint256 length,
-        uint8[] memory tokenTypes,
-        address[] memory tokenAddresses,
-        uint256[] memory tokenIds,
-        uint256[] memory amounts
-    ) private pure returns (TokenDetail[] memory) {
-        TokenDetail[] memory tokenDetails = new TokenDetail[](length);
-        for (uint256 i = 0; i < length; i++) {
-            uint8 currentType = tokenTypes[i];
-            require(currentType < 2, Bartering__UnknownType());
-            tokenDetails[i].tokenType = TokenType(currentType);
-            tokenDetails[i].tokenAddress = tokenAddresses[i];
-            tokenDetails[i].tokenId = tokenIds[i];
-            tokenDetails[i].amount = amounts[i];
-        }
-        return tokenDetails;
     }
 
     /**
