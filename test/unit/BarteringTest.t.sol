@@ -4,6 +4,7 @@ pragma solidity ^0.8.26;
 
 import {DeployBartering} from "../../script/DeployBartering.s.sol";
 import {Bartering} from "../../src/Bartering.sol";
+import {HandlerFunctions} from "./BarteringTestHandler.t.sol";
 import {Test, console} from "../../lib/forge-std/src/Test.sol";
 import {Vm} from "../../lib/forge-std/src/Vm.sol";
 import {StdCheats} from "../../lib/forge-std/src/StdCheats.sol";

@@ -17,8 +17,9 @@ contract MockERC721 is ERC721 {
 
     constructor() ERC721("MockERC721", "M721") {}
 
-    function mint(address to) external {
+    function mint(address to) external returns (uint256) {
         _currentTokenId++;
         _mint(to, _currentTokenId);
+        return _currentTokenId;
     }
 }

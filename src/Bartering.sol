@@ -1,9 +1,7 @@
 /*
 TO DO
-- Security check for transfers
-- Evaluate additions
-- Add the possibility to make proposals
-- Evaluate the addition of ERC1155
+- Evaluate additions like ERC1155
+- Add the option to make proposals
 */
 
 // SPDX-License-Identifier: GPL-3.0-or-later
@@ -21,21 +19,18 @@ import {Ownable} from "../lib/openzeppelin-contracts/contracts/access/Ownable.so
 // Error declarations
 error Bartering__IncorrectFee();
 error Bartering__LengthMismatch();
-error Bartering__NotZero();
 error Bartering__OnlyRequester();
 error Bartering__RequestNotPending();
 error Bartering__NothingToWithdraw();
 error Bartering__TokenDoesNotExist();
 error Bartering__ProposalRequestLengthMismatch();
-error Bartering__RequestNotActive();
 error Bartering__ProposalNotValid();
-error Bartering__IndicesCannotBeEmpty();
 error Bartering__DuplicateOrUnsortedIndices();
 error Bartering__OwnerWithdrawalFailed();
 
 /**
  * @title Bartering
- * @dev A contract to facilitate bartering of ERC20 and ERC721 tokens between users.
+ * @dev Facilitates bartering of ERC20 and ERC721 tokens between users.
  */
 contract Bartering is ReentrancyGuard, Ownable, ERC721Holder {
     using SafeERC20 for IERC20;
@@ -64,8 +59,8 @@ contract Bartering is ReentrancyGuard, Ownable, ERC721Holder {
     // Struct to hold details about a barter request
     struct BarterRequest {
         address requester; // The address of the person making the request
-        TokenDetail[] offeredItems; // List of items offered by the requester
-        TokenDetail[] requestedItems; // List of items requested from the other party
+        TokenDetail[] offeredItems; // Items offered by the requester
+        TokenDetail[] requestedItems; // Items requested from the other party
         RequestStatus status; // Status of the request (Pending, Completed, Cancelled)
     }
 
@@ -97,7 +92,7 @@ contract Bartering is ReentrancyGuard, Ownable, ERC721Holder {
     }
 
     /**
-     * @dev Constructor to initialize the contract with the initial owner.
+     * @dev Initializes the contract with the initial owner.
      * @param initialOwner The address of the initial owner.
      */
     constructor(address initialOwner) Ownable(initialOwner) {
@@ -107,8 +102,8 @@ contract Bartering is ReentrancyGuard, Ownable, ERC721Holder {
     /**
      * @notice Creates a new barter request.
      * @dev For ERC721 tokens, a token ID of `type(uint256).max` is considered as accepting any token from the collection.
-     * @param offeredTokens Array of the tokens being offered.
-     * @param requestedTokens Array of the tokens being requested.
+     * @param offeredTokens Array of tokens being offered.
+     * @param requestedTokens Array of tokens being requested.
      * @return The ID of the newly created request.
      */
     function createBarterRequest(TokenDetail[] calldata offeredTokens, TokenDetail[] calldata requestedTokens)
@@ -188,14 +183,14 @@ contract Bartering is ReentrancyGuard, Ownable, ERC721Holder {
     }
 
     /**
-     * @notice Withdraws specified tokens for the caller by their indices.
+     * @notice Withdraws specified tokens for the caller by their indices. Indices must be in ascending order.
      * @param indices Array of indices representing the tokens to withdraw.
      */
     function withdrawTokensByIndices(uint256[] calldata indices) external nonReentrant {
         uint256 arrayLength = s_withdrawableTokens[msg.sender].length;
         uint256 indicesLength = indices.length;
 
-        // Ensure indices are within bounds, unique and sorted
+        // Ensure indices are within bounds, unique, and sorted
         for (uint256 i = 0; i < indicesLength; i++) {
             require(indices[i] < arrayLength, Bartering__TokenDoesNotExist());
             if (i > 0) {
@@ -353,13 +348,8 @@ contract Bartering is ReentrancyGuard, Ownable, ERC721Holder {
      * @param requestId The ID of the request.
      * @return The details of the barter request.
      */
-    function getBarterRequestById(uint256 requestId)
-        external
-        view
-        returns (address, TokenDetail[] memory, TokenDetail[] memory, RequestStatus)
-    {
-        BarterRequest memory request = s_barterRequests[requestId];
-        return (request.requester, request.offeredItems, request.requestedItems, request.status);
+    function getBarterRequestById(uint256 requestId) external view returns (BarterRequest memory) {
+        return s_barterRequests[requestId];
     }
 
     /**
