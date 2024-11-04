@@ -1,0 +1,4 @@
+[ZoneTransfer]
+ZoneId=3
+ReferrerUrl=https://github.com/jgm/pandoc/releases/tag/3.2.1
+HostUrl=https://objects.githubusercontent.com/github-production-release-asset-2e65be/571770/742a8158-f65e-4738-91ac-595fd2091bdd?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=releaseassetproduction%2F20240628%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20240628T161939Z&X-Amz-Expires=300&X-Amz-Signature=ba3657db7e8b53d22f445977245724ac566622bd116dea49450b1d4d0ba74e53&X-Amz-SignedHeaders=host&actor_id=76077241&key_id=0&repo_id=571770&response-content-disposition=attachment%3B%20filename%3Dpandoc-3.2.1-1-amd64.deb&response-content-type=application%2Foctet-stream

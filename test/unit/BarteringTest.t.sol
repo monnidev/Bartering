@@ -43,4 +43,22 @@ contract BarteringTest is StdCheats, Test {
     // withdrawAllTokens
     // withdrawTokensByIndices
     // ownerWithdrawal
+
+
+    function _handlerCreateERC20(uint256[] amounts) private returns(address[]) {
+        uint256 number = amounts.length;
+        address[] tokens = address[](number);
+        for (int i; i < number; i++) {
+            tokens[i] = address(new MockERC20(msg.sender, amounts[i]));
+        }
+    }
+
+    // da aggiustare
+    function _handlerCreateERC721(uint256 amount) private returns(address[], ) {
+        uint256 number = amounts.length;
+        address[] tokens = address[](number);
+        for (int i; i < number; i++) {
+            tokens[i] = address(new MockERC721(msg.sender, amounts[i]));
+        }
+    }
 }

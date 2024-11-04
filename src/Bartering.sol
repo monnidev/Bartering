@@ -183,7 +183,8 @@ contract Bartering is ReentrancyGuard, Ownable, ERC721Holder {
     }
 
     /**
-     * @notice Withdraws specified tokens for the caller by their indices. Indices must be in ascending order.
+     * @notice Withdraws specified tokens for the caller by their indices.
+     * @notice Indices must be in ascending order ot the transation will revert.
      * @param indices Array of indices representing the tokens to withdraw.
      */
     function withdrawTokensByIndices(uint256[] calldata indices) external nonReentrant {
